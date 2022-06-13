@@ -1,0 +1,45 @@
+.heatmap {
+    height: 100%;
+}
+.selection {
+    pointer-events: none;
+    fill: lightgoldenrodyellow;
+    stroke: yellow;
+    opacity: 0.5;
+}
+
+.selection-coordinates {
+    background: white;
+    user-select: none;
+}
+
+.transitioned {
+    transition: all ease-in-out 0.3s;
+}
+
+.cells-appear {
+    opacity: 0.01;
+}
+
+.cells-appear.cells-appear-active {
+    opacity: 1;
+    transition: opacity .5s ease-in;
+}
+
+.cells-enter {
+    opacity: 0.01;
+}
+
+.cells-enter.cells-enter-active {
+    opacity: 1;
+    transition: opacity 500ms ease-in;
+}
+
+.cells-leave {
+    opacity: 1;
+}
+
+.cells-leave.cells-leave-active {
+    opacity: 0.01;
+    transition: opacity 300ms ease-in;
+}
