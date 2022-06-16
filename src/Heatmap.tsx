@@ -5,13 +5,8 @@ import {JSXInternal} from 'preact/src/jsx'
 import './Heatmap.css'
 
 import {useGlobalState} from './App'
-import {useResizeObserver} from './hooks/resizeObserver'
+import {HeatmapGrid, RectBox, useHeatmapGrid} from './hooks/heatmapGrid'
 import {Data, Sample} from './types'
-
-type RectBox = { x: number, y: number, width: number, height: number }
-
-const COLUMN_WIDTH = 64
-const ROW_HEIGHT = 24
 
 const EMPTY_SELECTION: RectBox = {
     x: 0,
@@ -95,42 +90,41 @@ function addBucketValue(buckets: Buckets, column: number, row: number, sample: S
     }
 }
 
-function useBuckets(data: Sample[], domain: Partial<DOMRect>, viewport?: Partial<DOMRect>) {
+function useBuckets(data: Sample[], heatmapGrid: HeatmapGrid, viewport?: HeatmapSelection | null) {
     return useMemo(() => {
         if (viewport === null) {
             return null
         }
         const buckets: Buckets = {}
-        const {width, height} = domain
+        const {width, height, columnWidth, rowHeight} = heatmapGrid
         if (!viewport) {
             for (const sample of data) {
                 const x = sample.x * width
                 const y = sample.y * height
-                const column = Math.floor(x / COLUMN_WIDTH)
-                const row = Math.floor(y / ROW_HEIGHT)
+                const column = Math.floor(x / columnWidth)
+                const row = Math.floor(y / rowHeight)
                 addBucketValue(buckets, column, row, sample)
             }
         } else {
             const {x: minX, y: minY, width: viewWidth, height: viewHeight} = viewport
-
-            const columnWidth = COLUMN_WIDTH * viewWidth / width
-            const rowHeight = ROW_HEIGHT * viewHeight / height
-            const maxX = viewWidth - columnWidth
-            const maxY = viewHeight - rowHeight
+            const scaledColumnWidth = columnWidth * viewWidth / width
+            const scaledRowHeight = rowHeight * viewHeight / height
+            const maxX = viewWidth - scaledColumnWidth
+            const maxY = viewHeight - scaledRowHeight
             for (const sample of data) {
                 const x = (sample.x * width) - minX
                 if (x >= 0 && x < maxX) {
                     const y = (sample.y * height) - minY
                     if (y >= 0 && y < maxY) {
-                        const column = Math.floor(x / columnWidth)
-                        const row = Math.floor(y / rowHeight)
+                        const column = Math.floor(x / scaledColumnWidth)
+                        const row = Math.floor(y / scaledRowHeight)
                         addBucketValue(buckets, column, row, sample)
                     }
                 }
             }
         }
         return buckets
-    }, [data, domain, viewport])
+    }, [data, heatmapGrid, viewport])
 }
 
 type HeatmapSelection = {
@@ -149,196 +143,231 @@ export function Heatmap({data, ranges: {x: rangeX, y: rangeY}}: HeatmapProps) {
 
     const [state, setState] = useGlobalState()
 
-    const heatmapRef = useRef<HTMLDivElement>(null)
-    const svgRef = useRef<SVGSVGElement>(null)
-
-    const dimensions = useResizeObserver(heatmapRef)
+    const containerRef = useRef<HTMLDivElement>(null)
+    const heatmapGrid = useHeatmapGrid(containerRef)
 
     const [selection, setSelection] = useState<HeatmapSelection | null>(null)
     const [zoom, setZoom] = useState(1)
 
-    const buckets = useBuckets(data, dimensions)
+    const heatmapBuckets = useBuckets(data, heatmapGrid)
+    const selectionBuckets = useBuckets(data, heatmapGrid, selection)
 
-    const overlay = useBuckets(data, dimensions, selection)
+    const heatmapJsx = useMemo(() => {
+        const {columns, rows, columnWidth, rowHeight, right, bottom} = heatmapGrid
 
-    const [cells, zoomed, xAxis, yAxis] = useMemo(() => {
-        const columns = Math.floor(dimensions.width / COLUMN_WIDTH)
-        const rows = Math.floor(dimensions.height / ROW_HEIGHT)
-        const cells: JSXInternal.Element[] = []
-        const zoomed: JSXInternal.Element[] = []
+        const heatmapJsx: JSXInternal.Element[] = []
         for (let row = 0; row < rows; row++) {
-            const y = row * ROW_HEIGHT
+            const y = row * rowHeight
             for (let column = 0; column < columns; column++) {
-                const x = column * COLUMN_WIDTH
-                let value = getValue(buckets, column, row)
+                const x = column * columnWidth
+                let value = getValue(heatmapBuckets, column, row)
                 // content: getContent(buckets, gridColumn, gridRow),
-                cells.push(<rect
+                heatmapJsx.push(<rect
                     fill={`hsl(200,80%,${Math.round(100 - 100 * value)}%)`}
                     x={x}
                     y={y}
-                    width={COLUMN_WIDTH}
-                    height={ROW_HEIGHT}
+                    width={columnWidth}
+                    height={rowHeight}
                 />)
+                heatmapJsx.push(<line x1={x} y1={0} x2={x} y2={bottom} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
             }
+            heatmapJsx.push(<line x1={0} y1={y} x2={right} y2={y} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
         }
-        if (overlay) {
-            const columnWidth = selection ? COLUMN_WIDTH * selection.width / dimensions.width : 0
-            const rowHeight = selection ? ROW_HEIGHT * selection.height / dimensions.height : 0
+        heatmapJsx.push(<line x1={right} y1={0} x2={right} y2={bottom} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        heatmapJsx.push(<line x1={0} y1={bottom} x2={right} y2={bottom} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
 
-            for (const column of Object.keys(overlay).map(Number)) {
-                const x = selection.x + column * columnWidth
-                for (const row of Object.keys(overlay[column]).map(Number)) {
-                    const y = selection.y + row * rowHeight
-                    let value = getValue(overlay, column, row)
-                    zoomed.push(<rect
+        return heatmapJsx
+    }, [heatmapBuckets, heatmapGrid])
+
+    const xAxis = useMemo(() => {
+        const {columns, columnWidth, right} = heatmapGrid
+        const xAxis: JSXInternal.Element[] = []
+        xAxis.push(<line x1={0} y1={-20} x2={0} y2={0} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        for (let column = 1; column < columns; column++) {
+            const x = column * columnWidth
+            xAxis.push(<text x={x - 8} y={-12}>{
+                (rangeX.min + rangeX.span * column / columns).toFixed(2)
+            }</text>)
+            xAxis.push(<line x1={x} y1={-7.5} x2={x} y2={0} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        }
+        xAxis.push(<line x1={0} y1={0} x2={right} y2={0} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        xAxis.push(<line x1={right} y1={-20} x2={right} y2={0} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        return xAxis
+    }, [heatmapBuckets, heatmapGrid])
+
+    const yAxis = useMemo(() => {
+        const {rows, rowHeight, bottom} = heatmapGrid
+        const yAxis: JSXInternal.Element[] = []
+        const x2 = 45
+        yAxis.push(<line x1={25} y1={0} x2={x2} y2={0} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        for (let row = 1; row < rows; row++) {
+            const y = row * rowHeight
+            yAxis.push(<text x={10} y={y + 5}>{
+                (rangeY.min + rangeY.span * row / rows).toFixed(2)
+            }</text>)
+            yAxis.push(<line x1={37.5} y1={y} x2={x2} y2={y} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        }
+        yAxis.push(<line x1={25} y1={bottom} x2={x2} y2={bottom} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        yAxis.push(<line x1={x2} y1={0} x2={x2} y2={bottom} stroke="lightgray" vector-effect="non-scaling-stroke"/>)
+        return yAxis
+    }, [heatmapBuckets, heatmapGrid])
+
+    const selectionJsx = useMemo(() => {
+        if (selectionBuckets) {
+            const {width, height, columnWidth, rowHeight, right, bottom} = heatmapGrid
+            const selectionJsx: JSXInternal.Element[] = []
+            const scaledColumnWidth = selection ? columnWidth * selection.width / width : 0
+            const scaledRowHeight = selection ? rowHeight * selection.height / height : 0
+
+            for (const column of Object.keys(selectionBuckets).map(Number)) {
+                const x = selection.x + column * scaledColumnWidth
+                for (const row of Object.keys(selectionBuckets[column]).map(Number)) {
+                    const y = selection.y + row * scaledRowHeight
+                    let value = getValue(selectionBuckets, column, row)
+                    selectionJsx.push(<rect
                         fill={`hsl(40,80%,${Math.round(100 - 100 * value)}%)`}
                         x={x}
                         y={y}
-                        width={columnWidth}
-                        height={rowHeight}
+                        width={scaledColumnWidth}
+                        height={scaledRowHeight}
                     />)
                 }
             }
+            return selectionJsx
         }
-        const xAxis: JSXInternal.Element[] = []
-        for (let column = 0; column < columns; column++) {
-            xAxis.push(<text x={column * COLUMN_WIDTH} y={0}>{
-                (rangeX.min + rangeX.span * column / columns).toFixed(2)
-            }</text>)
-        }
-        const yAxis: JSXInternal.Element[] = []
-        for (let row = 0; row < rows; row++) {
-            yAxis.push(<text x={0} y={row * ROW_HEIGHT}>{
-                (rangeY.min + rangeY.span * row / rows).toFixed(2)
-            }</text>)
-        }
-        return [cells, zoomed, xAxis, yAxis]
-    }, [buckets, overlay, dimensions, selection])
+    }, [selectionBuckets, heatmapGrid, selection])
 
-    const columnWidth = COLUMN_WIDTH
-    const rowHeight = ROW_HEIGHT
+    const [zoomOrigin, setZoomOrigin] = useState({x: 0, y: 0})
 
-    const [zoomOrigin, setZoomOrigin] = useState({x:0, y: 0})
-
-    const clientToSvg = useMemo(()=>{
+    const svgRef = useRef<SVGSVGElement>(null)
+    const clientToSvg = useMemo(() => {
         if (svgRef.current) {
-            let matrix = svgRef.current.getScreenCTM()
-            if (zoom !== 1) {
-                matrix = matrix
-                    .translate(
-                        (1 - zoom) * dimensions.width/2 - zoom * zoomOrigin.x,
-                        (1 - zoom) * dimensions.height/2 - zoom * zoomOrigin.y
-                    )
-                    .scale(zoom, zoom)
-            }
-            return matrix.inverse()
+            const {left, top, width, height} = heatmapGrid
+            return svgRef.current.getScreenCTM()
+                .translate(
+                    left + (1 - zoom) * width / 2 - zoom * zoomOrigin.x,
+                    top + (1 - zoom) * height / 2 - zoom * zoomOrigin.y
+                )
+                .scale(zoom, zoom)
+                .inverse()
         }
-    }, [svgRef.current, dimensions, zoom, zoomOrigin])
+    }, [svgRef.current, heatmapGrid, zoom, zoomOrigin])
+
+    const onMouseDown = useCallback(({clientX, clientY, shiftKey}) => {
+        if (shiftKey) {
+            const {x, y} = new DOMPointReadOnly(clientX, clientY).matrixTransform(clientToSvg)
+            const {columnWidth, rowHeight} = heatmapGrid
+            setSelection({
+                x: x - (x % columnWidth),
+                y: y - (y % rowHeight),
+                width: columnWidth,
+                height: rowHeight,
+                clientX,
+                clientY,
+                clientWidth: 0,
+                clientHeight: 0,
+                editing: true
+            })
+        } else if (zoom > 1) {
+            setZoomOrigin({x: clientX - heatmapGrid.width / 2, y: clientY - heatmapGrid.height / 2})
+        }
+    }, [selection, clientToSvg, heatmapGrid])
+
+    const onMouseMove = useCallback(({clientX, clientY}) => {
+        const {x, y} = new DOMPointReadOnly(clientX, clientY).matrixTransform(clientToSvg)
+        if (selection?.editing) {
+            const {columnWidth, rowHeight} = heatmapGrid
+            const width = Math.max(columnWidth, columnWidth * Math.ceil(x / columnWidth) - selection.x)
+            const height = Math.max(rowHeight, rowHeight * Math.ceil(y / rowHeight) - selection.y)
+            if (width !== selection.width || height !== selection.height) {
+                setSelection({
+                    ...selection,
+                    width,
+                    height,
+                    clientWidth: clientX - selection.clientX,
+                    clientHeight: clientY - selection.clientY
+                })
+            }
+        }
+        setState({...state, pointer: {...state.pointer, x, y}})
+    }, [state, selection, clientToSvg, heatmapGrid])
+
+    const onMouseUp = useCallback(() => {
+        if (selection?.editing) {
+            setSelection({
+                ...selection,
+                editing: false
+            })
+            setZoom(Math.min(
+                heatmapGrid.width / selection.clientWidth,
+                heatmapGrid.height / selection.clientHeight
+            ))
+            setZoomOrigin({
+                x: selection.clientX + (selection.clientWidth - heatmapGrid.width) / 2,
+                y: selection.clientY + (selection.clientHeight - heatmapGrid.height) / 2
+            })
+        }
+    }, [selection])
+
+    const onWheel = useCallback(event => {
+        if (!event.altKey) {
+            if (event.deltaY > 0) {
+                setZoom(Math.max(1, zoom / 2))
+                if (zoom <= 1.2) {
+                    setZoomOrigin({x: 0, y: 0})
+                }
+            } else {
+                setZoom(Math.min(10, zoom * 2))
+            }
+            setState({...state, pointer: {...state.pointer, z: zoom}})
+            event.stopPropagation()
+            event.preventDefault()
+        }
+    }, [state, zoom])
+
+    const transform = useMemo(() => {
+        const {left, top, width, height} = heatmapGrid
+        const tx = left + (1 - zoom) * width / 2 - zoom * zoomOrigin.x
+        const ty = top + (1 - zoom) * height / 2 - zoom * zoomOrigin.y
+        return {
+            heatmap: `matrix(${zoom} 0 0 ${zoom} ${tx} ${ty})`,
+            xAxis: `matrix(${zoom} 0 0 1 ${tx} 25)`,
+            yAxis: `matrix(1 0 0 ${zoom} 0 ${ty})`
+        }
+    }, [zoom, heatmapGrid])
 
     return (
-        <div className="heatmap" ref={heatmapRef}>
+        <div className="heatmap" ref={containerRef}>
             <svg ref={svgRef} width="100%" height="100%" preserveAspectRatio="none"
-                 onMouseDown={useCallback(({clientX, clientY, shiftKey}) => {
-                     if (shiftKey) {
-                         const {x, y} = new DOMPointReadOnly(clientX, clientY).matrixTransform(clientToSvg)
-                         setSelection({
-                             x: x - (x % columnWidth),
-                             y: y - (y % rowHeight),
-                             width: columnWidth,
-                             height: rowHeight,
-                             clientX,
-                             clientY,
-                             clientWidth: 0,
-                             clientHeight: 0,
-                             editing: true
-                         })
-                     } else if (zoom > 1) {
-                         setZoomOrigin({x: clientX - dimensions.width / 2, y: clientY - dimensions.height / 2})
-                     }
-                 }, [selection, clientToSvg])}
-                 onMouseMove={useCallback(({clientX, clientY}) => {
-                     const {x, y} = new DOMPointReadOnly(clientX, clientY).matrixTransform(clientToSvg)
-                     if (selection?.editing) {
-                         const width = Math.max(columnWidth, columnWidth * Math.ceil(x / columnWidth) - selection.x)
-                         const height = Math.max(rowHeight, rowHeight * Math.ceil(y / rowHeight) - selection.y)
-                         if (width !== selection.width || height !== selection.height) {
-                             setSelection({
-                                 ...selection,
-                                 width,
-                                 height,
-                                 clientWidth: clientX - selection.clientX,
-                                 clientHeight: clientY - selection.clientY,
-                             })
-                         }
-                     }
-                     setState({...state, pointer: {...state.pointer, x, y}})
-                 }, [state, selection, clientToSvg])}
-                 onMouseUp={useCallback(() => {
-                     if (selection?.editing) {
-                         setSelection({
-                             ...selection,
-                             editing: false
-                         })
-                         setZoom(Math.min(
-                             dimensions.width / selection.clientWidth,
-                             dimensions.height / selection.clientHeight
-                         ))
-                         setZoomOrigin({
-                             x: selection.clientX + (selection.clientWidth - dimensions.width) / 2,
-                             y: selection.clientY + (selection.clientHeight - dimensions.height) / 2
-                         })
-                     }
-                 }, [selection])}
-                 onWheel={useCallback(event => {
-                     if (!event.altKey) {
-                         if (event.deltaY > 0) {
-                             setZoom(zoom - 0.2)
-                             if (zoom <= 1.2) {
-                                 setZoomOrigin({x: 0, y: 0})
-                             }
-                         } else {
-                             setZoom(zoom + 0.2)
-                         }
-                         setState({...state, pointer: {...state.pointer, z: zoom}})
-                         event.stopPropagation()
-                         event.preventDefault()
-                     }
-                 }, [state, zoom])}>
+                 onMouseDown={onMouseDown}
+                 onMouseMove={onMouseMove}
+                 onMouseUp={onMouseUp}
+                 onWheel={onWheel}>
                 <defs>
-                    <filter x="0" y="0" width="1" height="1" id="white-background">
-                        <feFlood flood-color="white" result="bg"/>
-                        <feMerge>
-                            <feMergeNode in="bg"/>
-                            <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
-                    </filter>
+                    {useMemo(() => (
+                        <clipPath id="clip-grid">
+                            <rect x={heatmapGrid.left} y={heatmapGrid.top} width={heatmapGrid.width}
+                                  height={heatmapGrid.height}/>
+                        </clipPath>
+                    ), [heatmapGrid])}
                 </defs>
-                <g className="transitioned"
-                   style={{'transform': `matrix(${zoom}, 0, 0, ${zoom}, ${(1 - zoom) * dimensions.width/2 - zoom * zoomOrigin.x}, ${(1 - zoom) * dimensions.height/2 - zoom * zoomOrigin.y})`}}>
-                    <g className="heatmap-layer">
-                        {cells}
-                    </g>
-                    {selection ? (
-                        <g className="selection-layer">
-                            <rect className="selection" {...selection}/>
-                            <g className="overlay-layer">
-                                {zoomed}
-                            </g>
-                            <text className="selection-coordinates"
-                                  x={selection.x - 10} y={selection.y - 5}
-                                  filter="url(#white-background)">
-                                {selection.x.toFixed(0)} x {selection.y.toFixed(0)}
-                            </text>
-                            <text className="selection-coordinates"
-                                  x={selection.x + selection.width + 10} y={selection.y + selection.height + 5}
-                                  filter="url(#white-background)">
-                                {(selection.x + selection.width).toFixed(0)} x {(selection.y + selection.height).toFixed(0)}
-                            </text>
+                <g clip-path="url(#clip-grid)">
+                    <g className="transitioned" transform={transform.heatmap}>
+                        <g className="heatmap-layer">
+                            {heatmapJsx}
                         </g>
-                    ) : null}
-                    {xAxis}
-                    {yAxis}
+                        {selection ? (
+                            <g className="selection-layer">
+                                <rect className="selection" {...selection}/>
+                                <g className="overlay-layer">
+                                    {selectionJsx}
+                                </g>
+                            </g>
+                        ) : null}
+                    </g>
                 </g>
+                <g className="transitioned x-axis" transform={transform.xAxis}>{xAxis}</g>
+                <g className="transitioned y-axis" transform={transform.yAxis}>{yAxis}</g>
             </svg>
         </div>
     )

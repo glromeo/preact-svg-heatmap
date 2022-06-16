@@ -1,5 +1,7 @@
 .heatmap {
     height: 100%;
+    font-family: sans-serif;
+    font-size: 13px;
 }
 .selection {
     pointer-events: none;
