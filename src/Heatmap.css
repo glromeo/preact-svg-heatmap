@@ -1,0 +1,84 @@
+.heatmap {
+    box-sizing: border-box;
+    position: relative;
+    height: 100%;
+    font-family: sans-serif;
+    font-size: 13px;
+    overflow: hidden;
+    display: grid;
+}
+
+.heatmap * {
+    box-sizing: border-box;
+    position: absolute;
+}
+
+.heatmap-grid {
+    border: 2px solid gray;
+}
+.heatmap-x-axis {
+}
+.heatmap-y-axis {
+}
+
+svg {
+    user-select: none;
+}
+
+.animated {
+    transition: all ease-in 0.3s;
+}
+
+.axis {
+    fill: none;
+    font-size: 10px;
+    font-family: sans-serif;
+    text-anchor: middle;
+}
+
+.axis line {
+    stroke: gray;
+    stroke-width: 2;
+    shape-rendering: crispEdges;
+}
+
+.pointer {
+    stroke: red;
+}
+
+.pointer line {
+    stroke: red;
+}
+
+.axis text {
+    fill: gray;
+}
+
+.badge {
+    user-select: none;
+}
+
+.badge-background {
+    fill: rgb(250, 50, 25);
+    z-index: 100;
+}
+
+.badge-number {
+    fill: white;
+    font-family: sans-serif;
+    font-size: 10px;
+    z-index: 100;
+}
+
+.grid line {
+    fill: none;
+    stroke: gray;
+    stroke-width: 1;
+}
+
+.selection {
+    pointer-events: none;
+    fill: lightgoldenrodyellow;
+    stroke: yellow;
+    opacity: 0.5;
+}
